@@ -17,14 +17,14 @@ from telegram.ext import (
 from telegram.error import RetryAfter
 
 # ==================== CONFIGURATION ====================
-BOT_TOKEN = "8871976724:AAHM7zr9ertWF3bbn6X8pyrd739p9tXLB74"  # আপনার বট টোকেন দিন
+BOT_TOKEN = "8871976724:AAErqWjPFxSn-AyBBqQxO9nVHMA6h1mIuVY"  # আপনার বট টোকেন দিন
 ADMIN_ID = 5747820322              # আপনার টেলিগ্রাম ID (Integer)
-MUST_JOIN_CHANNEL = "@Crypto_Royels" # ডিরেক্ট ইউজারদের যে চ্যানেলে জয়েন করাতে চান
-SUPPORT_LINK = "t.me/Crypto_Tanvir"
+MUST_JOIN_CHANNEL = "@Crypto_Royels" # যে চ্যানেলে জয়েন করাতে চান
+SUPPORT_LINK = "https://t.me/YOUR_ADMIN_USERNAME"
 OTP_GROUP_LINK = "https://t.me/+MbuMh29hodEyOTE1"
 
-BINANCE_PAY_ID = "996941749 (Binance Pay ID)"
-BITGET_PAY_ID = "0xfda41136ed44aebd172f92b63a60d3b0defee83d / Address"
+BINANCE_PAY_ID = "123456789 (Binance Pay ID)"
+BITGET_PAY_ID = "YOUR_BITGET_PAY_ID / Address"
 
 # ==================== WEB SERVER FOR UPTIMEROBOT ====================
 web_app = Flask('')
@@ -73,22 +73,22 @@ def init_db():
         number TEXT
     )''')
 
-    # System Settings Table (Traffic Text, etc.)
+    # Settings Table
     c.execute('''CREATE TABLE IF NOT EXISTS settings (
         key TEXT PRIMARY KEY,
         value TEXT
     )''')
 
-    # Insert Default Traffic if not exists
+    # Default Traffic
     c.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('live_traffic', '🔥 30 Minute LIVE Traffic\n\n📱 FACEBOOK 1\n🇲🇬 MADAGASCAR : HIGH 🟢\n🇺🇦 UKRAINE : HIGH 🟢\n\n📱 WHATSAPP 1\n🇲🇬 MADAGASCAR : HIGH 🟢')")
     
-    # Insert Default Countries
+    # Default Countries
     default_countries = [
         ('Bangladesh', '🇧🇩', 'WS', 0),
         ('Togo', '🇹🇬', 'TG', 0),
         ('Sierra Leone', '🇸🇱', 'TG', 0),
         ('Ukraine', '🇺🇦', 'WS', 0),
-        ('Madagascar', '🇲🇬', 'WS', 0)
+        ('Sudan', '🇸🇩', 'TG', 0)
     ]
     for c_name, c_flag, c_srv, c_hid in default_countries:
         c.execute("INSERT OR IGNORE INTO countries (name, flag, service, is_hidden) VALUES (?, ?, ?, ?)", (c_name, c_flag, c_srv, c_hid))
@@ -98,11 +98,10 @@ def init_db():
 
 init_db()
 
-# Global State Dictionary
+# Global States
 user_states = {}
 active_tasks = {}
 
-# ==================== HELPER FUNCTIONS ====================
 def get_db():
     return sqlite3.connect(DB_NAME)
 
@@ -130,7 +129,6 @@ async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.commit()
     conn.close()
 
-    # Force Join Check
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("📢 Join Channel", url=f"https://t.me/{MUST_JOIN_CHANNEL.replace('@','')}")],
         [InlineKeyboardButton("✅ Verify Join", callback_data="verify_join")]
@@ -192,11 +190,10 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data == "get_number":
         if not is_subscribed(user_id):
             keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton("💸 Get Subscription", callback_data="buy_sub")]
+                [InlineKeyboardButton("💳 Get Subscription", callback_data="buy_sub")]
             ])
             await query.message.reply_text("❌ **No Active Subscription.**", reply_markup=keyboard, parse_mode="Markdown")
         else:
-            # Show Countries
             conn = get_db()
             c = conn.cursor()
             c.execute("SELECT id, name, flag FROM countries WHERE is_hidden=0")
@@ -207,7 +204,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for cid, cname, cflag in countries:
                 buttons.append(InlineKeyboardButton(f"{cflag} {cname}", callback_data=f"cnum_{cid}"))
             
-            # Split into pairs of 2
             pair_buttons = [buttons[i:i + 2] for i in range(0, len(buttons), 2)]
             await query.message.reply_text("📱 **Select a Country:**", reply_markup=InlineKeyboardMarkup(pair_buttons), parse_mode="Markdown")
 
@@ -218,7 +214,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         c.execute("SELECT name, flag, service FROM countries WHERE id=?", (cid,))
         country = c.fetchone()
         
-        # Get 4 Stock Numbers
         c.execute("SELECT number FROM stock WHERE country_name=? LIMIT 4", (country[0],))
         numbers = c.fetchall()
         conn.close()
@@ -230,15 +225,15 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             num_text = f"• `{country[1]} 88017{random.randint(100000,999999)}`\n• `{country[1]} 88018{random.randint(100000,999999)}`\n"
 
-        srv_logo = "💬 WhatsApp" if country[2] == "WS" else "✈️ Telegram"
+        srv_logo = "WhatsApp" if country[2] == "WS" else "Telegram"
         
         msg = (
-            f"🌐 **Country:** {country[1]} {country[0]} ({srv_logo})\n\n"
+            f"{country[1]} **{srv_logo}** `{country[1]} 88017{random.randint(100000,999999)}`\n\n"
             f"📱 **Available Stock Numbers:**\n{num_text}"
         )
         keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔄 Refresh Stock", callback_data=f"cnum_{cid}")],
-            [InlineKeyboardButton("📩 Live OTP Group", url=OTP_GROUP_LINK)]
+            [InlineKeyboardButton("Change Country", callback_data="get_number")],
+            [InlineKeyboardButton("Refresh", callback_data=f"cnum_{cid}")]
         ])
         await query.message.reply_text(msg, reply_markup=keyboard, parse_mode="Markdown")
 
@@ -269,7 +264,6 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ADMIN CALLBACKS
     elif data.startswith("adm_approve_"):
         target_uid = int(data.split("_")[2])
-        # Default 1 Month Add
         end_date = (datetime.now() + timedelta(days=30)).strftime("%Y-%m-%d %H:%M:%S")
         conn = get_db()
         c = conn.cursor()
@@ -287,8 +281,12 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         c.execute("UPDATE countries SET is_hidden = 1 - is_hidden WHERE id=?", (cid,))
         conn.commit()
         conn.close()
-        await query.answer("Country Hide/Unhide Status Changed!")
+        await query.answer("Country Status Updated!")
         await admin_manage_countries(query.message, context)
+
+    elif data == "adm_broadcast":
+        user_states[user_id] = "WAITING_BROADCAST_MSG"
+        await query.message.reply_text("✍️ Type or send the message you want to **Broadcast** to all users:")
 
 # ==================== ADMIN PANEL COMMANDS ====================
 async def admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -296,7 +294,6 @@ async def admin_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🌐 Hide / Unhide Countries", callback_data="adm_countries")],
-        [InlineKeyboardButton("📦 Upload Stock File", callback_data="adm_stock"), InlineKeyboardButton("📝 Edit Live Traffic", callback_data="adm_traffic")],
         [InlineKeyboardButton("📢 Broadcast to All Users", callback_data="adm_broadcast")]
     ])
     await update.message.reply_text("👑 **Admin Control Panel** 👑", reply_markup=keyboard)
@@ -315,29 +312,26 @@ async def admin_manage_countries(message, context):
     
     await message.reply_text("⚙️ **Click to Toggle Hide/Unhide:**", reply_markup=InlineKeyboardMarkup(buttons))
 
-# ==================== BROADCAST & TEXT HANDLER ====================
+# ==================== MAIN OTP GENERATOR & MESSAGE PARSER ====================
 async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text.strip() if update.message.text else ""
 
-    # Payment Proof Processing
     if user_states.get(user_id) == "WAITING_PAYMENT_PROOF":
         user_states[user_id] = None
         await update.message.reply_text("✅ Payment proof submitted to Admin! Please wait for approval.")
         
-        # Notify Admin
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton("✅ Approve 1 Month", callback_data=f"adm_approve_{user_id}")]
         ])
         await context.bot.send_message(
             chat_id=ADMIN_ID,
-            text=f"📥 **New Payment Request!**\n\n👤 **User:** {update.effective_user.full_name} (`{user_id}`)\n💬 **TRX/Proof:** `{text}`",
+            text=f"📥 **New Payment Request!**\n\n👤 **User:** {update.effective_user.full_name} (`{user_id}`)\n💬 **Proof:** `{text}`",
             reply_markup=keyboard,
             parse_mode="Markdown"
         )
         return
 
-    # Admin Broadcast Waiting
     if user_states.get(user_id) == "WAITING_BROADCAST_MSG" and user_id == ADMIN_ID:
         user_states[user_id] = None
         conn = get_db()
@@ -357,61 +351,75 @@ async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
         await update.message.reply_text(f"✅ Broadcast Sent to `{sent}` users!")
         return
 
-    # ❌ OTP BROADCAST COMMAND PARSER (e.g. 🇧🇩 #Bd WS 8801350❌❌1462 100cd 1s)
+    # OTP Command Format Handler (e.g., 🇵🇸 WhatsApp 249738383 100cd 1s OR 🇸🇱 Telegram 23279366153 50cd 1m)
     parts = text.split()
-    if len(parts) >= 4 and parts[-1].lower().endswith(("s", "m")) and parts[-2].lower().endswith("cd"):
+    if len(parts) >= 3:
         if user_id != ADMIN_ID and not is_subscribed(user_id):
-            await update.message.reply_text("❌ Subscription required to generate OTP.")
+            await update.message.reply_text("❌ Active Subscription Required!")
             return
-            
-        time_part = parts.pop().lower()
-        delay_seconds = float(time_part[:-1]) if time_part.endswith("s") else float(time_part[:-1]) * 60
-        total_count = int(parts.pop().lower().replace("cd", ""))
-        full_pattern = " ".join(parts)
 
-        await update.message.reply_text(f"🚀 **OTP Task Started!**\nTotal: `{total_count}` | Delay: `{delay_seconds}s`", parse_mode="Markdown")
-        asyncio.create_task(run_otp_loop(update.effective_chat.id, full_pattern, total_count, delay_seconds, context))
+        delay_seconds = 1.0
+        total_count = 100
 
-async def run_otp_loop(chat_id, full_pattern, total_count, delay_seconds, context):
+        # Check for time (e.g. 1s / 1m) and count (e.g. 100cd)
+        if parts[-1].lower().endswith(("s", "m")):
+            t_part = parts.pop().lower()
+            delay_seconds = float(t_part[:-1]) if t_part.endswith("s") else float(t_part[:-1]) * 60
+        
+        if parts[-1].lower().endswith("cd"):
+            c_part = parts.pop().lower()
+            total_count = int(c_part.replace("cd", ""))
+
+        base_pattern = " ".join(parts)
+        
+        await update.message.reply_text(f"🚀 **OTP Broadcast Started!**\nTotal: `{total_count}` | Delay: `{delay_seconds}s`", parse_mode="Markdown")
+        asyncio.create_task(run_photo_style_otp_loop(update.effective_chat.id, base_pattern, total_count, delay_seconds, context))
+
+async def run_photo_style_otp_loop(chat_id, base_pattern, total_count, delay_seconds, context):
     active_tasks[chat_id] = True
     
-    formatted_pattern = full_pattern
-    if " WS " in f" {formatted_pattern} " or " ws " in f" {formatted_pattern} ":
-        formatted_pattern = re.sub(r'\b(WS|ws)\b', '🟢', formatted_pattern)
-    elif " TG " in f" {formatted_pattern} " or " tg " in f" {formatted_pattern} ":
-        formatted_pattern = re.sub(r'\b(TG|tg)\b', '✈️', formatted_pattern)
+    # Check Service Logo
+    logo = "🟢"
+    if "telegram" in base_pattern.lower() or "tg" in base_pattern.lower():
+        logo = "✈️"
 
     for _ in range(total_count):
         if not active_tasks.get(chat_id, False):
             break
 
-        final_line = formatted_pattern
-        if len(final_line) > 4:
-            random_last = "".join([str(random.randint(0, 9)) for _ in range(4)])
-            final_line = final_line[:-4] + random_last
+        # Keep first 5-6 digits fixed, randomize last 4-5 digits
+        formatted_line = base_pattern
+        if len(formatted_line) > 5:
+            random_last_4 = "".join([str(random.randint(0, 9)) for _ in range(4)])
+            formatted_line = formatted_line[:-4] + random_last_4
 
-        otp_code = str(random.randint(100000, 999999))
-        message_body = f"• {final_line}\n🔑 **OTP Code:** `{otp_code}`"
+        otp_code = str(random.randint(10000, 999999))
+
+        # Photo EXACT Format:
+        # 🇸🇱 Telegram 23279366153
+        # [ ✈️ 49150 ]
+        message_body = f"{formatted_line}"
 
         keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔑 Copy Your Key", callback_data=f"copy_{otp_code}")],
-            [
-                InlineKeyboardButton("🤖 Get Number", url=SUPPORT_LINK),
-                InlineKeyboardButton("📢 Support GP", url=SUPPORT_LINK)
-            ]
+            [InlineKeyboardButton(f"{logo}  📋 {otp_code}", callback_data=f"copy_{otp_code}")]
         ])
 
         try:
-            await context.bot.send_message(chat_id=chat_id, text=message_body, parse_mode="Markdown", reply_markup=keyboard)
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=message_body,
+                reply_markup=keyboard
+            )
         except RetryAfter as e:
             await asyncio.sleep(e.retry_after + 1)
         except Exception:
             pass
 
         await asyncio.sleep(delay_seconds)
+        
     active_tasks[chat_id] = False
 
-# ==================== MAIN STARTUP ====================
+# ==================== STARTUP ====================
 if __name__ == "__main__":
     keep_alive()
     app = ApplicationBuilder().token(BOT_TOKEN).build()
