@@ -25,7 +25,7 @@ from telegram.ext import (
 # BOT CONFIG
 # =========================
 
-BOT_TOKEN = "8862245246:AAGIMWcpv7d7yotl9b40tAS32HiRAib3krM"
+BOT_TOKEN = "8875251875:AAG_UmQZsl8bfHMmR8DGM-kZ1dN0ITgzB84"
 
 # এখানে আপনার Telegram ID বসাবেন
 # একাধিক Admin হলে:
