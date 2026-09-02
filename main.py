@@ -1,403 +1,882 @@
-import asyncio
-import random
-import re
 import os
-from threading import Thread
-from flask import Flask
-from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
+import re
+import random
+import sqlite3
+import asyncio
+from datetime import datetime
+
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.constants import ParseMode
 from telegram.ext import (
-    ApplicationBuilder,
+    Application,
     CommandHandler,
     MessageHandler,
     CallbackQueryHandler,
     ContextTypes,
-    filters
+    filters,
 )
-from telegram.error import RetryAfter
 
-# --- Keep Alive Server (UptimeRobot) ---
-web_app = Flask('')
+# ============================================================
+#                    SECRET NUMBER BOT
+#                         main.py
+# ============================================================
 
-@web_app.route('/')
-def home():
-    return "Number Bot is alive!"
+# =========================
+# BOT CONFIG
+# =========================
 
-def run_web():
-    port = int(os.environ.get("PORT", 8080))
-    web_app.run(host='0.0.0.0', port=port)
-
-def keep_alive():
-    t = Thread(target=run_web)
-    t.start()
-
-# --- Configuration & Constants ---
 BOT_TOKEN = "8862245246:AAGIMWcpv7d7yotl9b40tAS32HiRAib3krM"
-ADMIN_ID = 5747820322
 
-# Premium Emoji IDs
-EMOJI_STATS_USERNAME = "6152280926257684465"
-EMOJI_STATS_TGID = "6086867401813532902"
-EMOJI_STATS_SUB = "6104644116832853064"
-EMOJI_STATS_PRICE = "6084695716024821348"
-EMOJI_STATS_DURATION = "6107109342161411278"
-EMOJI_STATS_EARNING = "6105092867900840631"
-EMOJI_STATS_BALANCE = "6190336264940559752"
+# এখানে আপনার Telegram ID বসাবেন
+# একাধিক Admin হলে:
+# ADMIN_IDS = [123456789, 987654321]
+ADMIN_IDS = [5747820322]
 
-EMOJI_ACTIVE = "6087027281971127830"
-EMOJI_DETECTIVE = "6206448624298104566"
+MIN_WITHDRAW = 30
 
-EMOJI_FB = "6091599390621834528"
-EMOJI_INT = "5319160079465857105"
-EMOJI_WS = "6298323188849838091"
-EMOJI_TG = "6242460902872850889"
-EMOJI_PY = "6258109564676220200"
+DB_NAME = "secret_number.db"
 
-# --- In-Memory Database / Data Structures ---
-users_db = {}     # user_id -> dict(banned, status, price, duration, earning, balance)
-services_db = [   # Default services
-    "Instagram", "Facebook", "WhatsApp", "Telegram", "Paypal", "Tiktok"
-]
-countries_db = {} # service_name -> list of strings (e.g., "🇵🇸 Sudan - 0.8Tk/OTP")
-support_links = ["https://t.me/telegram"]
 
-# Platform mappings for Emojis
-PLATFORM_EMOJIS = {
-    "facebook": (EMOJI_FB, "Facebook", "📘"),
-    "fb": (EMOJI_FB, "Facebook", "📘"),
-    "instagram": (EMOJI_INT, "Instagram", "📸"),
-    "int": (EMOJI_INT, "Instagram", "📸"),
-    "whatsapp": (EMOJI_WS, "WhatsApp", "🟢"),
-    "ws": (EMOJI_WS, "WhatsApp", "🟢"),
-    "telegram": (EMOJI_TG, "Telegram", "✈️"),
-    "tg": (EMOJI_TG, "Telegram", "✈️"),
-    "paypal": (EMOJI_PY, "Paypal", "🅿️"),
-    "py": (EMOJI_PY, "Paypal", "🅿️"),
+# ============================================================
+#                    CUSTOM EMOJI IDs
+# ============================================================
+
+EMOJI = {
+
+    # My Stats
+    "username": "6152280926257684465",
+    "telegram_id": "6086867401803532902",
+    "subscription": "6104644116832853064",
+    "subscription_price": "6084695716024821348",
+    "duration": "6107109342161411278",
+    "total_earning": "6105092867900840631",
+    "balance": "6190336264940559752",
+
+    # Subscription
+    "active": "6087027281971127830",
+    "inactive": "6206448624298104566",
+
+    # Services
+    "facebook": "6091599390621834528",
+    "instagram": "5319160079465857105",
+    "whatsapp": "6298323188849838091",
+    "telegram": "6242460902872850889",
+    "paypal": "6258109564676220200",
 }
 
-def get_user_data(user_id: int):
-    if user_id not in users_db:
-        users_db[user_id] = {
-            "banned": False,
-            "status": "🔴 Detective",
-            "price": "0$",
-            "duration": "0DAY",
-            "earning": "0$",
-            "balance": "0.0৳"
-        }
-    return users_db[user_id]
 
-def build_main_keyboard(user_id: int):
-    keyboard = [
-        ["📱 Get Number", "📊 My Stats"],
-        ["💳 Withdraw", "🎧 Support"]
-    ]
-    if user_id == ADMIN_ID:
-        keyboard.append(["⚙️ Admin Panel"])
-    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+# ============================================================
+#                         SERVICES
+# ============================================================
 
-# --- Command Handlers ---
+SERVICES = {
 
-async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    get_user_data(user_id)
-    
-    if users_db[user_id]["banned"]:
-        await update.message.reply_text("❌ You are banned from using this bot.")
-        return
+    "facebook": {
+        "name": "Facebook",
+        "emoji": EMOJI["facebook"],
+        "button": "📘 Facebook",
+    },
 
-    welcome_text = "👋 <b>Welcome to SECRET NUMBER BOT!</b>\n\nChoose an option from the menu below:"
-    await update.message.reply_text(
-        welcome_text,
-        parse_mode="HTML",
-        reply_markup=build_main_keyboard(user_id)
+    "instagram": {
+        "name": "Instagram",
+        "emoji": EMOJI["instagram"],
+        "button": "📸 Instagram",
+    },
+
+    "whatsapp": {
+        "name": "WhatsApp",
+        "emoji": EMOJI["whatsapp"],
+        "button": "🟢 WhatsApp",
+    },
+
+    "telegram": {
+        "name": "Telegram",
+        "emoji": EMOJI["telegram"],
+        "button": "✈️ Telegram",
+    },
+
+    "paypal": {
+        "name": "Paypal",
+        "emoji": EMOJI["paypal"],
+        "button": "💳 Paypal",
+    },
+
+    "tiktok": {
+        "name": "TikTok",
+        "emoji": None,
+        "button": "🎵 TikTok",
+    },
+
+    "imo": {
+        "name": "IMO",
+        "emoji": None,
+        "button": "💬 IMO",
+    },
+}
+
+
+# Aliases
+ALIASES = {
+    "fb": "facebook",
+    "facebook": "facebook",
+
+    "int": "instagram",
+    "ig": "instagram",
+    "instagram": "instagram",
+    "intagram": "instagram",
+
+    "ws": "whatsapp",
+    "wa": "whatsapp",
+    "whatsapp": "whatsapp",
+
+    "tg": "telegram",
+    "telegram": "telegram",
+
+    "py": "paypal",
+    "paypal": "paypal",
+
+    "tt": "tiktok",
+    "tiktok": "tiktok",
+
+    "imo": "imo",
+}
+
+
+# ============================================================
+#                         DATABASE
+# ============================================================
+
+db = sqlite3.connect(DB_NAME, check_same_thread=False)
+db.row_factory = sqlite3.Row
+
+
+def database():
+
+    cursor = db.cursor()
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY,
+            username TEXT DEFAULT '',
+            first_name TEXT DEFAULT '',
+
+            banned INTEGER DEFAULT 0,
+
+            subscription INTEGER DEFAULT 0,
+            subscription_price TEXT DEFAULT '0$',
+            duration TEXT DEFAULT '30DAY',
+
+            total_earning TEXT DEFAULT '0$',
+            balance REAL DEFAULT 0,
+
+            created_at TEXT
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS services (
+            service TEXT PRIMARY KEY,
+            enabled INTEGER DEFAULT 1
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS countries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            service TEXT,
+            country TEXT
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS supports (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            value TEXT
+        )
+    """)
+
+    for service in SERVICES:
+
+        cursor.execute(
+            """
+            INSERT OR IGNORE INTO services
+            (service, enabled)
+            VALUES (?, 1)
+            """,
+            (service,)
+        )
+
+    db.commit()
+
+
+database()
+
+
+# ============================================================
+#                         HELPERS
+# ============================================================
+
+def is_admin(user_id):
+
+    return user_id in ADMIN_IDS
+
+
+def ensure_user(user):
+
+    db.execute(
+        """
+        INSERT INTO users
+        (user_id, username, first_name, created_at)
+
+        VALUES (?, ?, ?, ?)
+
+        ON CONFLICT(user_id)
+        DO UPDATE SET
+        username=excluded.username,
+        first_name=excluded.first_name
+        """,
+
+        (
+            user.id,
+            user.username or "",
+            user.first_name or "",
+            datetime.now().isoformat(),
+        )
     )
 
-async def copy_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    code = query.data.split("_")[-1]
-    await query.answer(text=f"🔑 OTP Code: {code}", show_alert=True)
+    db.commit()
 
-# --- Text Handler for Menu & Admin Commands ---
 
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    user_data = get_user_data(user_id)
+def get_user(user_id):
 
-    if user_data["banned"]:
-        await update.message.reply_text("❌ You are banned from using this bot.")
-        return
+    return db.execute(
+        "SELECT * FROM users WHERE user_id=?",
+        (user_id,)
+    ).fetchone()
 
-    text = update.message.text.strip()
 
-    # --- 1. GET NUMBER ---
-    if text == "📱 Get Number":
-        keyboard = []
-        for s in services_db:
-            s_lower = s.lower()
-            emoji_code = "📱"
-            if s_lower in PLATFORM_EMOJIS:
-                e_id, _, alt = PLATFORM_EMOJIS[s_lower]
-                emoji_code = f'<tg-emoji emoji-id="{e_id}">{alt}</tg-emoji>'
-            keyboard.append([InlineKeyboardButton(f"{s}", callback_data=f"srv_{s}")])
-        keyboard.append([InlineKeyboardButton("❌ Close", callback_data="close_menu")])
+def custom_emoji(emoji_id, fallback):
 
-        await update.message.reply_text(
-            "<b>🧿 Select a service:</b>",
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-        return
+    if not emoji_id:
+        return fallback
 
-    # --- 2. MY STATS ---
-    elif text == "📊 My Stats":
-        username = update.effective_user.username
-        username_str = f"@{username}" if username else "N/A"
+    return f'<tg-emoji emoji-id="{emoji_id}">⭐</tg-emoji>'
 
-        status_val = user_data["status"]
-        if "Active" in status_val:
-            status_html = f'<tg-emoji emoji-id="{EMOJI_ACTIVE}">🟢</tg-emoji> Active'
-        else:
-            status_html = f'<tg-emoji emoji-id="{EMOJI_DETECTIVE}">🔴</tg-emoji> Detective'
 
-        stats_msg = (
-            f'<tg-emoji emoji-id="{EMOJI_STATS_USERNAME}">👤</tg-emoji> <b>Username:</b> {username_str}\n'
-            f'<tg-emoji emoji-id="{EMOJI_STATS_TGID}">🆔</tg-emoji> <b>Telegram ID:</b> <code>{user_id}</code>\n'
-            f'<tg-emoji emoji-id="{EMOJI_STATS_SUB}">📜</tg-emoji> <b>My Subscription:</b> {status_html}\n'
-            f'<tg-emoji emoji-id="{EMOJI_STATS_PRICE}">💵</tg-emoji> <b>Subscription Price:</b> {user_data["price"]}\n'
-            f'<tg-emoji emoji-id="{EMOJI_STATS_DURATION}">⏳</tg-emoji> <b>Duration:</b> {user_data["duration"]}\n'
-            f'<tg-emoji emoji-id="{EMOJI_STATS_EARNING}">💰</tg-emoji> <b>Total Earning:</b> {user_data["earning"]}\n'
-            f'<tg-emoji emoji-id="{EMOJI_STATS_BALANCE}">💳</tg-emoji> <b>My Balance:</b> {user_data["balance"]}'
+def service_name(service):
+
+    return SERVICES[service]["name"]
+
+
+def service_emoji(service):
+
+    data = SERVICES[service]
+
+    if data["emoji"]:
+        return custom_emoji(
+            data["emoji"],
+            data["button"].split()[0]
         )
 
-        await update.message.reply_text(stats_msg, parse_mode="HTML")
-        return
+    return data["button"].split()[0]
 
-    # --- 3. WITHDRAWAL ---
-    elif text == "💳 Withdraw":
-        withdraw_text = (
-            "▫️▫️▫️▫️▫️▫️▫️▫️▫️▫️▫️▫️\n"
-            "《 🥷 <b>WITHDRAWAL</b> 》\n"
-            "▫️▫️▫️▫️▫️▫️▫️▫️▫️▫️▫️▫️\n"
-            "👏 <b>Total Otp:</b> 0\n"
-            "▫️▫️▫️▫️▫️▫️▫️▫️▫️▫️▫️▫️\n"
-            "👥 <b>Total Reffer:</b> 0\n"
-            "▫️▫️▫️▫️▫️▫️▫️▫️▫️▫️▫️▫️\n"
-            f"📅 <b>BALANCE:</b> {user_data['balance']}\n"
-            "▫️▫️▫️▫️▫️▫️▫️▫️▫️▫️▫️▫️\n"
-            "🛡️ <b>MINIMUM:</b> 30.0 ৳\n"
-            "▫️▫️▫️▫️▫️▫️▫️▫️▫️▫️▫️▫️\n"
-            "<b>SELECT METHOD:</b>"
-        )
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("👛 Nagad", callback_data="w_method")],
-            [InlineKeyboardButton("👛 Rocket", callback_data="w_method")],
-            [InlineKeyboardButton("👛 Binance", callback_data="w_method")],
-            [InlineKeyboardButton("❌ Cancel", callback_data="close_menu")]
-        ])
-        await update.message.reply_text(withdraw_text, parse_mode="HTML", reply_markup=keyboard)
-        return
 
-    # --- 4. SUPPORT ---
-    elif text == "🎧 Support":
-        if not support_links:
-            await update.message.reply_text("No support accounts configured currently.")
-            return
-        keyboard = []
-        for idx, link in enumerate(support_links, 1):
-            keyboard.append([InlineKeyboardButton(f"🎧 Support Agent {idx}", url=link)])
-        await update.message.reply_text(
-            "<b> Contact Support Team:</b>",
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-        return
+def active_services():
 
-    # --- 5. ADMIN PANEL ---
-    elif text == "⚙️ Admin Panel" and user_id == ADMIN_ID:
-        admin_text = "🛠️ <b>ADMIN CONTROL PANEL</b>\nChoose an action to perform:"
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("📢 Broadcast", callback_data="adm_broadcast"), InlineKeyboardButton("📊 Bot Stats", callback_data="adm_stats")],
-            [InlineKeyboardButton("🎧 Support Settings", callback_data="adm_support")],
-            [InlineKeyboardButton("🚫 Ban User", callback_data="adm_ban"), InlineKeyboardButton("✅ Unban User", callback_data="adm_unban")]
-        ])
-        await update.message.reply_text(admin_text, parse_mode="HTML", reply_markup=keyboard)
-        return
+    rows = db.execute(
+        """
+        SELECT service
+        FROM services
+        WHERE enabled=1
+        ORDER BY rowid
+        """
+    ).fetchall()
 
-    # --- ADMIN COMMANDS ---
-    if user_id == ADMIN_ID:
-        # Service Management Commands
-        if text.startswith("/getnumber_set"):
-            lines = text.split("\n")[1:]
-            for line in lines:
-                s_name = line.strip()
-                if s_name and s_name not in services_db:
-                    services_db.append(s_name)
-            await update.message.reply_text("✅ Services updated successfully!")
-            return
+    return [row["service"] for row in rows]
 
-        elif text.startswith("/getnumber_remove_"):
-            s_rem = text.replace("/getnumber_remove_", "").strip()
-            if s_rem in services_db:
-                services_db.remove(s_rem)
-                await update.message.reply_text(f"✅ Service '{s_rem}' removed.")
-            else:
-                await update.message.reply_text("❌ Service not found.")
-            return
 
-        # Country Management Commands
-        elif text.startswith("/getnumber_") and "_country" in text:
-            # Example: /getnumber_instagram_country\n🇵🇸 Sudan - 0.8Tk/OTP
-            header, *c_lines = text.split("\n")
-            srv_key = header.replace("/getnumber_", "").replace("_country", "").strip().lower()
+def get_countries(service):
 
-            if srv_key not in countries_db:
-                countries_db[srv_key] = []
-            for line in c_lines:
-                c_item = line.strip()
-                if c_item and c_item not in countries_db[srv_key]:
-                    countries_db[srv_key].append(c_item)
-            await update.message.reply_text(f"✅ Countries added for '{srv_key}'.")
-            return
+    return db.execute(
+        """
+        SELECT *
+        FROM countries
+        WHERE service=?
+        ORDER BY id
+        """,
+        (service,)
+    ).fetchall()
 
-        elif text.startswith("/getnumber_country_") and text.endswith("_remov"):
-            # Example: /getnumber_country_🇵🇸 Sudan - 0.8TK/OTP_remov
-            raw = text.replace("/getnumber_country_", "").replace("_remov", "").strip()
-            found = False
-            for k in countries_db:
-                if raw in countries_db[k]:
-                    countries_db[k].remove(raw)
-                    found = True
-            if found:
-                await update.message.reply_text("✅ Country removed successfully.")
-            else:
-                await update.message.reply_text("❌ Country format not found.")
-            return
 
-        # User Stats Admin Command
-        elif text.startswith("/set_userstasts_"):
-            lines = text.split("\n")
-            target_uid = int(lines[0].replace("/set_userstasts_", "").strip())
-            u_data = get_user_data(target_uid)
+# ============================================================
+#                         MAIN MENU
+# ============================================================
 
-            for line in lines[1:]:
-                if "Subscription :-" in line:
-                    u_data["status"] = line.split(":-")[1].strip()
-                elif "Subscription Price :-" in line:
-                    u_data["price"] = line.split(":-")[1].strip()
-                elif "Duration :-" in line:
-                    u_data["duration"] = line.split(":-")[1].strip()
-                elif "Total Earning :-" in line:
-                    u_data["earning"] = line.split(":-")[1].strip()
-                elif "My Balance :-" in line:
-                    u_data["balance"] = line.split(":-")[1].strip()
+def main_menu(user_id):
 
-            await update.message.reply_text(f"✅ Stats updated for User ID {target_uid}.")
-            return
+    buttons = [
 
-    # --- 6. OTP/NUMBER PARSER COMMAND (e.g. 🇧🇩 BD ws WhatsApp 88017738635862) ---
-    parts = text.split()
-    if len(parts) >= 3 and any(char.isdigit() for char in parts[-1]):
-        plat_key = None
-        for p in parts:
-            p_low = p.lower()
-            if p_low in PLATFORM_EMOJIS:
-                plat_key = p_low
-                break
-
-        if plat_key:
-            emoji_id, name, alt = PLATFORM_EMOJIS[plat_key]
-            country_flag = parts[0]
-            number = parts[-1]
-            
-            header_text = f"<b>{country_flag} <tg-emoji emoji-id=\"{emoji_id}\">{alt}</tg-emoji> {name.upper()} {number}</b>"
-            otp_code = str(random.randint(100000, 999999))
-            
-            keyboard = InlineKeyboardMarkup([
-                [InlineKeyboardButton(f"📋 {otp_code}", callback_data=f"copy_{otp_code}")]
-            ])
-
-            await update.message.reply_text(
-                header_text,
-                parse_mode="HTML",
-                reply_markup=keyboard
+        [
+            InlineKeyboardButton(
+                "📱 Get Number",
+                callback_data="get_number"
             )
-            return
+        ],
 
-# --- Callback Query Handler (Inline Button Presses) ---
+        [
+            InlineKeyboardButton(
+                "📊 My Stats",
+                callback_data="stats"
+            )
+        ],
 
-async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    data = query.data
-    user_id = query.from_user.id
-    user_data = get_user_data(user_id)
+        [
+            InlineKeyboardButton(
+                "💸 Withdrawal",
+                callback_data="withdraw"
+            )
+        ],
 
-    if data == "close_menu":
-        await query.message.delete()
-        return
+        [
+            InlineKeyboardButton(
+                "🆘 Support",
+                callback_data="support"
+            )
+        ],
+    ]
 
-    elif data == "w_method":
-        await query.answer(text="Minimum Withdraw 30 Tk ❌", show_alert=True)
-        return
+    # Admin only
+    if is_admin(user_id):
 
-    # Service Selection Process
-    elif data.startswith("srv_"):
-        srv_name = data.replace("srv_", "")
-        srv_key = srv_name.lower()
-        country_list = countries_db.get(srv_key, [])
-
-        keyboard = []
-        for c in country_list:
-            keyboard.append([InlineKeyboardButton(c, callback_data=f"cntry_{c}")])
-        keyboard.append([InlineKeyboardButton("⬅️ Back", callback_data="back_to_services")])
-
-        await query.message.edit_text(
-            f"<b>📍 Select a country for {srv_name.upper()}:</b>",
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup(keyboard)
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    "⚙️ Admin Panel",
+                    callback_data="admin"
+                )
+            ]
         )
-        return
 
-    elif data == "back_to_services":
-        keyboard = []
-        for s in services_db:
-            keyboard.append([InlineKeyboardButton(s, callback_data=f"srv_{s}")])
-        keyboard.append([InlineKeyboardButton("❌ Close", callback_data="close_menu")])
+    return InlineKeyboardMarkup(buttons)
 
-        await query.message.edit_text(
-            "<b>🧿 Select a service:</b>",
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup(keyboard)
+
+# ============================================================
+#                         /START
+# ============================================================
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    user = update.effective_user
+
+    ensure_user(user)
+
+    row = get_user(user.id)
+
+    if row["banned"]:
+
+        await update.message.reply_text(
+            "🚫 <b>You are banned from this bot.</b>",
+            parse_mode=ParseMode.HTML
         )
+
         return
 
-    elif data.startswith("cntry_"):
-        if "Active" not in user_data["status"]:
-            await query.answer(text="Your subscription not active ❌", show_alert=True)
+    await update.message.reply_text(
+
+        "╔══════════════════════╗\n"
+        "       <b>SECRET NUMBER BOT</b>\n"
+        "╚══════════════════════╝\n\n"
+
+        "🌟 Welcome!\n"
+        "Select an option below:",
+
+        parse_mode=ParseMode.HTML,
+
+        reply_markup=main_menu(user.id)
+    )
+
+
+# ============================================================
+#                       GET NUMBER
+# ============================================================
+
+async def get_number_page(query):
+
+    buttons = []
+
+    for service in active_services():
+
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    SERVICES[service]["button"],
+                    callback_data=f"service:{service}"
+                )
+            ]
+        )
+
+    buttons.append(
+        [
+            InlineKeyboardButton(
+                "🔙 Back",
+                callback_data="home"
+            )
+        ]
+    )
+
+    await query.edit_message_text(
+
+        "📍 <b>Select a service:</b>\n\n"
+        "Choose the service you want.",
+
+        parse_mode=ParseMode.HTML,
+
+        reply_markup=InlineKeyboardMarkup(buttons)
+    )
+
+
+# ============================================================
+#                     SERVICE COUNTRIES
+# ============================================================
+
+async def service_page(query, service):
+
+    buttons = []
+
+    countries = get_countries(service)
+
+    for country in countries:
+
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    country["country"],
+                    callback_data=f"country:{country['id']}"
+                )
+            ]
+        )
+
+    if not buttons:
+
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    "⚠️ No Country Available",
+                    callback_data="nothing"
+                )
+            ]
+        )
+
+    buttons.append(
+        [
+            InlineKeyboardButton(
+                "🔙 Back",
+                callback_data="get_number"
+            )
+        ]
+    )
+
+    await query.edit_message_text(
+
+        f"📍 <b>Select a country for "
+        f"{service_emoji(service)} "
+        f"{service_name(service)}:</b>",
+
+        parse_mode=ParseMode.HTML,
+
+        reply_markup=InlineKeyboardMarkup(buttons)
+    )
+
+
+# ============================================================
+#                         MY STATS
+# ============================================================
+
+async def stats_page(query, user_id):
+
+    user = get_user(user_id)
+
+    if user["subscription"]:
+
+        sub = (
+            custom_emoji(
+                EMOJI["active"],
+                "🟢"
+            )
+            + " Active"
+        )
+
+    else:
+
+        sub = (
+            custom_emoji(
+                EMOJI["inactive"],
+                "🔴"
+            )
+            + " Detective"
+        )
+
+    username = user["username"]
+
+    if username:
+
+        username = "@" + username
+
+    else:
+
+        username = "N/A"
+
+    text = (
+
+        "╔══════════════════════╗\n"
+        "          <b>MY STATS</b>\n"
+        "╚══════════════════════╝\n\n"
+
+        f"{custom_emoji(EMOJI['username'], '👤')} "
+        f"<b>Username:</b> {username}\n\n"
+
+        f"{custom_emoji(EMOJI['telegram_id'], '🆔')} "
+        f"<b>Telegram ID:</b> <code>{user_id}</code>\n\n"
+
+        f"{custom_emoji(EMOJI['subscription'], '📋')} "
+        f"<b>My Subscription:</b> {sub}\n\n"
+
+        f"{custom_emoji(EMOJI['subscription_price'], '💵')} "
+        f"<b>Subscription Price:</b> "
+        f"{user['subscription_price']}\n\n"
+
+        f"{custom_emoji(EMOJI['duration'], '⏳')} "
+        f"<b>Duration:</b> "
+        f"{user['duration']}\n\n"
+
+        f"{custom_emoji(EMOJI['total_earning'], '💰')} "
+        f"<b>Total Earning:</b> "
+        f"{user['total_earning']}\n\n"
+
+        f"{custom_emoji(EMOJI['balance'], '💳')} "
+        f"<b>My Balance:</b> "
+        f"{user['balance']:.2f} Tk"
+    )
+
+    keyboard = [
+
+        [
+            InlineKeyboardButton(
+                "🔄 Refresh",
+                callback_data="stats"
+            )
+        ],
+
+        [
+            InlineKeyboardButton(
+                "🔙 Back",
+                callback_data="home"
+            )
+        ]
+    ]
+
+    await query.edit_message_text(
+
+        text,
+
+        parse_mode=ParseMode.HTML,
+
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+
+# ============================================================
+#                         WITHDRAW
+# ============================================================
+
+async def withdraw_page(query):
+
+    keyboard = [
+
+        [
+            InlineKeyboardButton(
+                "💳 Nagad",
+                callback_data="withdraw:Nagad"
+            )
+        ],
+
+        [
+            InlineKeyboardButton(
+                "💳 Rocket",
+                callback_data="withdraw:Rocket"
+            )
+        ],
+
+        [
+            InlineKeyboardButton(
+                "💳 Binnace",
+                callback_data="withdraw:Binance"
+            )
+        ],
+
+        [
+            InlineKeyboardButton(
+                "❌ Cancel",
+                callback_data="home"
+            )
+        ]
+    ]
+
+    text = (
+
+        "╔══════════════════════╗\n"
+        "        <b>WITHDRAWAL</b>\n"
+        "╚══════════════════════╝\n\n"
+
+        "🔥 <b>Total Otp:</b> 0\n\n"
+
+        "👥 <b>Total Reffer:</b> 0\n\n"
+
+        "💰 <b>BALANCE:</b> 0 Tk\n\n"
+
+        f"🔒 <b>MINIMUM:</b> {MIN_WITHDRAW} Tk\n\n"
+
+        "<b>SELECT METHOD</b>"
+    )
+
+    await query.edit_message_text(
+
+        text,
+
+        parse_mode=ParseMode.HTML,
+
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+
+# ============================================================
+#                         SUPPORT
+# ============================================================
+
+async def support_page(query):
+
+    rows = db.execute(
+        "SELECT * FROM supports ORDER BY id"
+    ).fetchall()
+
+    buttons = []
+
+    for row in rows:
+
+        value = row["value"]
+
+        if value.startswith("https://t.me/"):
+
+            buttons.append(
+                [
+                    InlineKeyboardButton(
+                        f"🆘 {value}",
+                        url=value
+                    )
+                ]
+            )
+
+        elif value.startswith("@"):
+
+            buttons.append(
+                [
+                    InlineKeyboardButton(
+                        f"🆘 {value}",
+                        url=f"https://t.me/{value[1:]}"
+                    )
+                ]
+            )
+
         else:
-            await query.answer(text="Country Selected! Contact admin for numbers.", show_alert=True)
+
+            buttons.append(
+                [
+                    InlineKeyboardButton(
+                        f"🆘 {value}",
+                        callback_data="support_info"
+                    )
+                ]
+            )
+
+    if not buttons:
+
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    "⚠️ Support not configured",
+                    callback_data="nothing"
+                )
+            ]
+        )
+
+    buttons.append(
+        [
+            InlineKeyboardButton(
+                "🔙 Back",
+                callback_data="home"
+            )
+        ]
+    )
+
+    await query.edit_message_text(
+
+        "🆘 <b>SUPPORT</b>\n\n"
+        "Select a support contact:",
+
+        parse_mode=ParseMode.HTML,
+
+        reply_markup=InlineKeyboardMarkup(buttons)
+    )
+
+
+# ============================================================
+#                         ADMIN PANEL
+# ============================================================
+
+async def admin_page(query):
+
+    if not is_admin(query.from_user.id):
+
+        await query.answer(
+            "❌ Admin Only",
+            show_alert=True
+        )
+
         return
 
-    # Admin Callback Features
-    elif data == "adm_stats" and user_id == ADMIN_ID:
-        total_u = len(users_db)
-        await query.answer(text=f"📊 Total Users: {total_u}", show_alert=True)
+    keyboard = [
 
-    elif data == "adm_support" and user_id == ADMIN_ID:
-        msg = "Send new support format:\n/set_support https://t.me/username"
-        await query.message.reply_text(msg)
+        [
+            InlineKeyboardButton(
+                "📢 Broadcast",
+                callback_data="admin_broadcast"
+            ),
 
-    elif data in ["adm_broadcast", "adm_ban", "adm_unban"] and user_id == ADMIN_ID:
-        await query.answer(text="Use text commands for this feature.", show_alert=True)
+            InlineKeyboardButton(
+                "📊 Stats",
+                callback_data="admin_stats"
+            )
+        ],
 
-# --- Main Application Setup ---
+        [
+            InlineKeyboardButton(
+                "🆘 Support",
+                callback_data="admin_support"
+            ),
 
-if __name__ == "__main__":
-    keep_alive()
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+            InlineKeyboardButton(
+                "🚫 Ban / Unban",
+                callback_data="admin_ban"
+            )
+        ],
 
-    app.add_handler(CommandHandler("start", start_cmd))
-    app.add_handler(CallbackQueryHandler(copy_callback, pattern="^copy_"))
-    app.add_handler(CallbackQueryHandler(handle_callback))
-    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
+        [
+            InlineKeyboardButton(
+                "📱 Get Number",
+                callback_data="admin_services"
+            )
+        ],
 
-    app.run_polling()
+        [
+            InlineKeyboardButton(
+                "🌍 Country Manager",
+                callback_data="admin_countries"
+            )
+        ],
+
+        [
+            InlineKeyboardButton(
+                "👤 User Stats",
+                callback_data="admin_userstats"
+            )
+        ],
+
+        [
+            InlineKeyboardButton(
+                "🔙 Back",
+                callback_data="home"
+            )
+        ]
+    ]
+
+    await query.edit_message_text(
+
+        "╔══════════════════════╗\n"
+        "         <b>ADMIN PANEL</b>\n"
+        "╚══════════════════════╝\n\n"
+
+        "⚙️ Select management option:",
+
+        parse_mode=ParseMode.HTML,
+
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+
+# ============================================================
+#                     /getnumber_set
+# ============================================================
+
+async def getnumber_set(update, context):
+
+    if not is_admin(update.effective_user.id):
+        return
+
+    text = update.message.text
+
+    parts = text.split(maxsplit=1)
+
+    if len(parts) < 2:
+
+        await update.message.reply_text(
+            "Example:\n\n"
+            "/getnumber_set Instagram Facebook WhatsApp"
+        )
+
+        return
+
+    names = re.split(
+        r"[\s,]+",
+        parts[1]
+    )
+
+    added = []
+
+    for name in names:
+
+        key = ALIASES.get(
+            name.lower().strip()
+        )
+
+        if not key:
+            continue
+
+        db.execute(
+            """
+            UPDATE services
+            SET enabled=1
+            WHERE service=?
+            """,
+            (key,)
+        )
+
+        added.append(
+            SERVICES[key]["name"]
+        )
+
+    db.commit()
+
+    if added:
+
+        await update.message.reply_text(
+            "✅ <b>Services Enabled</b>\n\n"
+            + "\n".join(
+                f"🟢 {x}" for x in added
+            ),
+            parse_mode=ParseMode.HTML
+        )
+
+    else:
+
+        await update.message.reply_text(
+            "❌ No valid service found."
